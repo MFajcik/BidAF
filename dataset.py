@@ -188,7 +188,7 @@ class SquadDataset(data.Dataset):
 
             # debug
             logging.info(f"# problems: {problems}")
-            logging.info(f"Problems affect {problems / len(examples) / 100:.2f} % of dataset.")
+            logging.info(f"Problems affect {problems / len(examples) / 100:.6f} % of dataset.")
             return examples
 
     @staticmethod
