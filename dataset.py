@@ -188,7 +188,7 @@ class SquadDataset(data.Dataset):
 
             # debug
             logging.info(f"# problems: {problems}")
-            logging.info(f"Problems affect {problems / len(examples) / 100:.6f} % of dataset.")
+            logging.info(f"Preprocessing problems affect {problems / len(examples) / 100:.6f} % of the dataset.")
             return examples
 
     @staticmethod
@@ -213,7 +213,8 @@ class SquadDataset(data.Dataset):
 
     @staticmethod
     def prepare_fields_char():
-        WORD_field = data.Field(batch_first=True, tokenize=lambda s: str.split(s, sep=JOIN_TOKEN), lower=True)
+        WORD_field = data.Field(batch_first=True, tokenize=lambda s: str.split(s, sep=JOIN_TOKEN), lower=True,
+                                include_lengths=True)
         CHAR_field = data.Field(batch_first=True, tokenize=list, lower=True)
         CHAR_nested_field = data.NestedField(CHAR_field, tokenize=lambda s: str.split(s, sep=JOIN_TOKEN))
         return [

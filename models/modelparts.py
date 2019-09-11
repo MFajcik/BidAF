@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import logging
 
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
 
 class Embedder(torch.nn.Module):
     def __init__(self, vocab, config):
@@ -58,6 +60,7 @@ class CharEmbedder(nn.Module):
         x = x.view(batch_size, -1, x.shape[-1])
         return x
 
+
 class HighwayNetwork(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -86,6 +89,7 @@ class HighwayNetwork(nn.Module):
             x = (1 - g) * h + g * x
         return x
 
+
 class Encoder(torch.nn.Module):
     def __init__(self, config):
         super(Encoder, self).__init__()
@@ -96,9 +100,10 @@ class Encoder(torch.nn.Module):
 
 
 class RNN(Encoder):
-    def __init__(self, config):
+    def __init__(self, config, padding_value=None):
         super(RNN, self).__init__(config)
         self.rnn = None
+        self.padding_value = 0. if padding_value is None else padding_value
 
     def init_hidden(self, directions, initfun=torch.zeros, requires_grad=True):
         """
@@ -116,7 +121,7 @@ class RNN(Encoder):
         self.cell_params = torch.nn.Parameter(
             initfun(self.layers * directions, 1, self.hidden_size, requires_grad=requires_grad))
 
-    def forward(self, inp):
+    def forward(self, inp, lengths=None, batch_first=True):
         """
         :param inp: Shape BATCH_SIZE x LEN x H_DIM
         """
@@ -126,8 +131,13 @@ class RNN(Encoder):
             hidden_params = self.hidden_params.repeat(1, bsz, 1)
             cell_params = self.cell_params.repeat(1, bsz, 1)
             outp = self.rnn(inp, (hidden_params, cell_params))[0]
-        else:
+        elif lengths is None:
             outp = self.rnn(inp)[0]
+        else:
+            inp_packed = pack_padded_sequence(inp, lengths, batch_first=batch_first, enforce_sorted=False)
+            outp_packed = self.rnn(inp_packed)[0]
+            outp, output_lengths = pad_packed_sequence(outp_packed, batch_first=batch_first,
+                                                       padding_value=self.padding_value)
         return outp
 
     def get_output_dim(self):
@@ -135,8 +145,8 @@ class RNN(Encoder):
 
 
 class LSTM(RNN):
-    def __init__(self, config, init_hidden=None):
-        super().__init__(config)
+    def __init__(self, config, init_hidden=None, **kwargs):
+        super().__init__(config, **kwargs)
         self.hidden_size = config['RNN_nhidden']
         self.layers = config['RNN_layers']
         self.rnn = torch.nn.LSTM(
@@ -153,8 +163,8 @@ class LSTM(RNN):
 
 
 class BiLSTM(RNN):
-    def __init__(self, config, init_hidden=None):
-        super().__init__(config)
+    def __init__(self, config, init_hidden=None, **kwargs):
+        super().__init__(config, **kwargs)
         self.hidden_size = config['RNN_nhidden']
         self.layers = config['RNN_layers']
         self.rnn = torch.nn.LSTM(

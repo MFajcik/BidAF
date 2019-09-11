@@ -11,7 +11,7 @@ class BidAF(SpanPredictionModule):
     No highway network
     """
 
-    def __init__(self, config, vocab, char_vocab):
+    def __init__(self, config, vocab, char_vocab, masking=True):
         super().__init__()
 
         self.char_embedder = CharEmbedder(config, char_vocab)
@@ -24,47 +24,46 @@ class BidAF(SpanPredictionModule):
 
         config_phrase = config.copy()
         config_phrase["RNN_input_dim"] = config["RNN_nhidden"] * 2
-        self.encoder = BiLSTM(config_phrase)
+        self.encoder = BiLSTM(config_phrase, padding_value=self.pad_token)
 
         self.lin_S = nn.Linear(config["RNN_nhidden"] * 10, 1)
         self.lin_E = nn.Linear(config["RNN_nhidden"] * 10, 1)
         self.dropout = nn.Dropout(p=config["dropout_rate"])
 
-        # self.att_weight_c = nn.Linear(config["RNN_nhidden"] * 2, 1, bias=False)
-        # self.att_weight_q = nn.Linear(config["RNN_nhidden"] * 2, 1, bias=False)
-        # self.att_weight_cq = nn.Linear(config["RNN_nhidden"] * 2, 1)
-        self.similarity_linear = nn.Linear(config["RNN_nhidden"] * 6, 1)
+        self.att_weight_c = nn.Linear(config["RNN_nhidden"] * 2, 1, bias=False)
+        self.att_weight_q = nn.Linear(config["RNN_nhidden"] * 2, 1, bias=False)
+        self.att_weight_cq = nn.Linear(config["RNN_nhidden"] * 2, 1)
+        # self.similarity_linear = nn.Linear(config["RNN_nhidden"] * 6, 1)
 
         config_modeling = config.copy()
         config_modeling["RNN_layers"] = 2
         config_modeling["RNN_input_dim"] = config["RNN_nhidden"] * 8
-        self.modeling_layer = BiLSTM(config_modeling)
+        self.modeling_layer = BiLSTM(config_modeling, padding_value=self.pad_token)
 
         config_output = config.copy()
         config_output["RNN_input_dim"] = config["RNN_nhidden"] * 14
-        self.output_layer = BiLSTM(config_output)
-        self.masking = True
+        self.output_layer = BiLSTM(config_output, padding_value=self.pad_token)
+        self.masking = masking
 
     def forward(self, batch):
-        c_padding_mask = batch.document == self.pad_token
-        q_padding_mask = batch.question == self.pad_token
+        c_padding_mask = batch.document[0] == self.pad_token
+        q_padding_mask = batch.question[0] == self.pad_token
 
         # 1. Character Embedding Layer
         q_emb_c, d_emb_c = self.char_embedder(batch.question_char), self.char_embedder(batch.document_char)
 
         # 2. Word Embedding Layer
-        q_emb_w, d_emb_w = self.embedder(batch.question), self.embedder(batch.document)
+        q_emb_w, d_emb_w = self.embedder(batch.question[0]), self.embedder(batch.document[0])
         # Fuse the embeddings:
-        # TODO: show we use the same HN for question and embedding
         q_emb, d_emb = self.highway_network(q_emb_w, q_emb_c), self.highway_network(d_emb_c, d_emb_w)
 
         # 3. Contextual embedding
-        q_enc, d_enc = self.dropout(self.encoder(q_emb)), self.dropout(self.encoder(d_emb))
+        q_enc, d_enc = self.dropout(self.encoder(q_emb, lengths=batch.question[1])), self.dropout(
+            self.encoder(d_emb, lengths=batch.document[1]))
 
         # 4. Attention flow
         # (batch, c_len, q_len)
-        S = self.compute_similarity_matrix(d_enc, q_enc, c_padding_mask, q_padding_mask)
-        # S = self.compute_sim_matrix2(d_enc, q_enc, c_padding_mask, q_padding_mask)
+        S = self.compute_similarity_matrix(d_enc, q_enc)
         C2Q = self.co_attention(S, q_enc, q_padding_mask)
         Q2C = self.max_attention(S, d_enc, c_padding_mask)
 
@@ -78,7 +77,7 @@ class BidAF(SpanPredictionModule):
         # (batch, c_len)
         start_logits = self.lin_S(start_rep).squeeze(-1)
         if self.masking:
-            start_logits.masked_fill_(c_padding_mask.byte(), float("-inf"))
+            start_logits.masked_fill_(c_padding_mask.type(dtype=torch.bool), float("-inf"))
 
         start_probs = F.softmax(start_logits, dim=-1).unsqueeze(1)
 
@@ -95,11 +94,16 @@ class BidAF(SpanPredictionModule):
 
         end_logits = self.lin_E(end_rep).squeeze(-1)
         if self.masking:
-            end_logits.masked_fill_(c_padding_mask.byte(), float("-inf"))
+            end_logits.masked_fill_(c_padding_mask.type(dtype=torch.bool), float("-inf"))
 
         return start_logits, end_logits
 
-    def compute_similarity_matrix(self, context_hiddens, question_hiddens, context_mask, question_mask, masking=False):
+    def compute_similarity_matrix_2(self, context_hiddens, question_hiddens, context_mask, question_mask,
+                                    masking=False):
+        """
+        This is nicer implementation, but more memory expensive
+        """
+
         batch_size = context_hiddens.shape[0]
         context_len = context_hiddens.shape[1]
         question_len = question_hiddens.shape[1]
@@ -115,49 +119,49 @@ class BidAF(SpanPredictionModule):
                 float('-inf'))
         return attention_scores
 
-    # def compute_similarity_matrix(self, c, q):
-    #     """
-    #         :param c: (batch, c_len, hidden_size * 2)
-    #         :param q: (batch, q_len, hidden_size * 2)
-    #         :return: (batch, c_len, q_len)
-    #     This method implementation has been inspired with implementation of
-    #     https://github.com/galsang/BiDAF-pytorch/blob/master/model/model.py
-    #     """
-    #
-    #     c_len, q_len = c.shape[1], q.shape[1]
-    #
-    #     # "a" component similarity
-    #     # (batch x c_len x 1) -> (batch x c_len x q_len)
-    #     a_similarity = self.att_weight_c(c).expand(-1, -1, q_len)
-    #
-    #     # "b" component similarity
-    #     # (batch x q_len x 1) -> (batch x 1 x q_len) -> (batch x c_len x q_len)
-    #     b_similarity = self.att_weight_q(q).permute(0, 2, 1).expand(-1, c_len, -1)
-    #
-    #     # Element wise similarity
-    #     #####################################
-    #     element_wise_similarity = []
-    #     # Go through all the b vector representations
-    #     for i in range(q_len):
-    #         # (batch, 1, 2d)
-    #         q_i = q.select(1, i).unsqueeze(1)
-    #
-    #         # element-wise product them with all a vectors
-    #         # (batch, c_len, 2d)
-    #         elemw_sim = c * q_i
-    #
-    #         # transform them to scalar representing element-wise component similarity score
-    #         # (batch, c_len)
-    #         element_wise_similarity_vector = self.att_weight_cq(elemw_sim).squeeze()
-    #         element_wise_similarity.append(element_wise_similarity_vector)
-    #
-    #     # (batch, c_len, q_len)
-    #     total_similarity = torch.stack(element_wise_similarity, dim=-1)
-    #
-    #     # Now add together to get total similarity
-    #     total_similarity += a_similarity + b_similarity
-    #
-    #     return total_similarity
+    def compute_similarity_matrix(self, c, q):
+        """
+            :param c: (batch, c_len, hidden_size * 2)
+            :param q: (batch, q_len, hidden_size * 2)
+            :return: (batch, c_len, q_len)
+        This method implementation has been inspired with implementation of
+        https://github.com/galsang/BiDAF-pytorch/blob/master/model/model.py
+        """
+
+        c_len, q_len = c.shape[1], q.shape[1]
+
+        # "a" component similarity
+        # (batch x c_len x 1) -> (batch x c_len x q_len)
+        a_similarity = self.att_weight_c(c).expand(-1, -1, q_len)
+
+        # "b" component similarity
+        # (batch x q_len x 1) -> (batch x 1 x q_len) -> (batch x c_len x q_len)
+        b_similarity = self.att_weight_q(q).permute(0, 2, 1).expand(-1, c_len, -1)
+
+        # Element wise similarity
+        #####################################
+        element_wise_similarity = []
+        # Go through all the b vector representations
+        for i in range(q_len):
+            # (batch, 1, 2d)
+            q_i = q.select(1, i).unsqueeze(1)
+
+            # element-wise product them with all a vectors
+            # (batch, c_len, 2d)
+            elemw_sim = c * q_i
+
+            # transform them to scalar representing element-wise component similarity score
+            # (batch, c_len)
+            element_wise_similarity_vector = self.att_weight_cq(elemw_sim).squeeze()
+            element_wise_similarity.append(element_wise_similarity_vector)
+
+        # (batch, c_len, q_len)
+        total_similarity = torch.stack(element_wise_similarity, dim=-1)
+
+        # Now add together to get total similarity
+        total_similarity += a_similarity + b_similarity
+
+        return total_similarity
 
     def max_attention(self, similarity_matrix, context_vectors, context_mask):
         """
@@ -172,7 +176,7 @@ class BidAF(SpanPredictionModule):
         # (batch, c_len)
         max_per_each_query = torch.max(similarity_matrix, dim=-1)[0]
         if self.masking:
-            max_per_each_query.masked_fill_(context_mask.byte(), float("-inf"))
+            max_per_each_query.masked_fill_(context_mask.type(dtype=torch.bool), float("-inf"))
         max_similarities_across_queries = F.softmax(max_per_each_query, dim=-1)
 
         # (batch, 1, c_len)
@@ -194,6 +198,7 @@ class BidAF(SpanPredictionModule):
         :return (batch, c_len, hidden_size * 2)
         """
         if self.masking:
-            similarity_matrix = similarity_matrix.masked_fill(query_mask.unsqueeze(1).byte(), float("-inf"))
+            similarity_matrix = similarity_matrix.masked_fill(query_mask.unsqueeze(1).type(dtype=torch.bool),
+                                                              float("-inf"))
         s_soft = F.softmax(similarity_matrix, dim=-1)
         return torch.bmm(s_soft, query_vectors)

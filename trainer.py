@@ -209,7 +209,7 @@ class ModelFramework():
                     ema = EMA.ema_register(config, model)
                     ema_active = True
 
-                #self.train_epoch(model, CrossEntropyLoss(), optimizer, train_iter)
+                self.train_epoch(model, CrossEntropyLoss(), optimizer, train_iter)
 
                 if ema_active:
                     EMA.ema_update(ema, model)
