@@ -215,7 +215,7 @@ class SquadDataset(data.Dataset):
     def prepare_fields_char():
         WORD_field = data.Field(batch_first=True, tokenize=lambda s: str.split(s, sep=JOIN_TOKEN), lower=True,
                                 include_lengths=True)
-        CHAR_field = data.Field(batch_first=True, tokenize=list, lower=True)
+        CHAR_field = data.Field(batch_first=True, tokenize=list, lower=True, init_token="<s>", eos_token="<e>")
         CHAR_nested_field = data.NestedField(CHAR_field, tokenize=lambda s: str.split(s, sep=JOIN_TOKEN))
         return [
             ('id', data.RawField()),
