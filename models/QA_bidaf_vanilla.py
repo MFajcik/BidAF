@@ -70,7 +70,7 @@ class BidAF(SpanPredictionModule):
         G = torch.cat((d_enc, C2Q, d_enc * C2Q, d_enc * Q2C), dim=-1)
 
         # (batch, c_len, 2d)
-        M = self.dropout(self.modeling_layer(G))
+        M = self.dropout(self.modeling_layer(G, lengths=batch.document[1]))
 
         # span start representation
         start_rep = self.dropout(torch.cat((G, M), dim=-1))
@@ -88,7 +88,7 @@ class BidAF(SpanPredictionModule):
         TILL_START = st_summary.expand(st_summary.shape[0], c_len, st_summary.shape[-1])
 
         end_in_rep = torch.cat((G, M, TILL_START, M * TILL_START), dim=-1)
-        M_2 = self.dropout(self.output_layer(end_in_rep))
+        M_2 = self.dropout(self.output_layer(end_in_rep, lengths=batch.document[1]))
 
         end_rep = self.dropout(torch.cat((G, M_2), dim=-1))
 
@@ -152,7 +152,7 @@ class BidAF(SpanPredictionModule):
 
             # transform them to scalar representing element-wise component similarity score
             # (batch, c_len)
-            element_wise_similarity_vector = self.att_weight_cq(elemw_sim).squeeze()
+            element_wise_similarity_vector = self.att_weight_cq(elemw_sim).squeeze(-1)
             element_wise_similarity.append(element_wise_similarity_vector)
 
         # (batch, c_len, q_len)
