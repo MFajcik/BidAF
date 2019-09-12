@@ -85,27 +85,8 @@ class ModelFramework():
             lossvalues += loss.tolist()
 
             best_span_probs, candidates = model.decode(logprobs_S, logprobs_E)
-            # if False:
-            #     # p1.shape
-            #     # Out[14]: torch.Size([100, 138])
-            #     # p2.shape
-            #     # Out[15]: torch.Size([100, 138])
-            #     batch_size, c_len = logprobs_S.size()
-            #     ls = torch.nn.LogSoftmax(dim=1)
-            #     device = device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            #     mask = (torch.ones(c_len, c_len) * float('-inf')).to(device).tril(-1).unsqueeze(0) \
-            #         .expand(batch_size, -1, -1)
-            #     score = (ls(logprobs_S).unsqueeze(2) + ls(logprobs_E).unsqueeze(1)) + mask
-            #     score, s_idx = score.max(dim=1)
-            #     score, e_idx = score.max(dim=1)
-            #     s_idx = torch.gather(s_idx, 1, e_idx.view(-1, 1)).squeeze()
-            #     candidates = (s_idx, e_idx)
-            span_probs += best_span_probs.tolist()  # prob = prob_start * prob_end
+            span_probs += best_span_probs.tolist()
             spans += self.get_spans(batch, candidates)
-
-            # print(candidates)
-            # print("\n".join(spans))
-            # exit()
             gt_spans += batch.gt_answer
 
         # compute the final loss and results

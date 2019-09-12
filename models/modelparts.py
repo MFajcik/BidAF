@@ -53,9 +53,9 @@ class CharEmbedder(nn.Module):
         # (batch * seq_len, 1, char_dim, word_len)
         x = x.view(-1, char_dim, word_len).unsqueeze(1)
         # (batch * seq_len, char_channel_size, conv_len)
-        x = self.char_conv(x).squeeze()
+        x = self.char_conv(x).squeeze(-2)
         # (batch * seq_len, char_channel_size)
-        x = F.max_pool1d(x, x.size(2)).squeeze()
+        x = F.max_pool1d(x, x.size(2)).squeeze(-1)
         # (batch, seq_len, char_channel_size)
         x = x.view(batch_size, -1, x.shape[-1])
         return x

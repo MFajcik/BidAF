@@ -85,7 +85,7 @@ class BidafSimplified(SpanPredictionModule):
             # element-wise product them with all a vectors
             # transform them to scalar representing element-wise component similarity score
             # (batch, a_len, 1)
-            element_wise_similarity_vector = self.att_weight_cq(a * bi).squeeze()
+            element_wise_similarity_vector = self.att_weight_cq(a * bi).squeeze(-1)
             element_wise_similarity.append(element_wise_similarity_vector)
 
         # (batch, a_len, b_len)
