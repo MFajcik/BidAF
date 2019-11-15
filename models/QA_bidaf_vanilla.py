@@ -98,12 +98,42 @@ class BidAF(SpanPredictionModule):
 
         return start_logits, end_logits
 
+    def compute_similarity_matrix(self, c, q):
+        """
+            :param c: (batch, c_len, hidden_size * 2)
+            :param q: (batch, q_len, hidden_size * 2)
+            :return: (batch, c_len, q_len)
+        """
+
+        c_len, q_len = c.shape[1], q.shape[1]
+
+        # "a" component similarity
+        # (batch x c_len x 1) -> (batch x c_len x q_len)
+        a_similarity = self.att_weight_c(c).expand(-1, -1, q_len)
+
+        # "b" component similarity
+        # (batch x q_len x 1) -> (batch x 1 x q_len) -> (batch x c_len x q_len)
+        b_similarity = self.att_weight_q(q).permute(0, 2, 1).expand(-1, c_len, -1)
+
+        # Element wise similarity
+        # A(B ⊙ w)
+        # B = Q query_matrix (usually smaller), A = context_matrix
+        element_wise_similarity = torch.bmm(c, (q * self.att_weight_cq.weight.unsqueeze(0))
+                                            .transpose(1, 2)) + self.att_weight_cq.bias
+
+        # Now add together to get total similarity
+        total_similarity = a_similarity + b_similarity + element_wise_similarity
+
+        return total_similarity
+
+    ##############################
+    # These are other variants of attention implementation I have tried before
+    ##############################
     def compute_similarity_matrix_2(self, context_hiddens, question_hiddens, context_mask, question_mask,
                                     masking=False):
         """
         This is nicer implementation, but more memory expensive
         """
-
         batch_size = context_hiddens.shape[0]
         context_len = context_hiddens.shape[1]
         question_len = question_hiddens.shape[1]
@@ -119,7 +149,7 @@ class BidAF(SpanPredictionModule):
                 float('-inf'))
         return attention_scores
 
-    def compute_similarity_matrix(self, c, q):
+    def compute_similarity_matrix_3(self, c, q):
         """
             :param c: (batch, c_len, hidden_size * 2)
             :param q: (batch, q_len, hidden_size * 2)
@@ -162,6 +192,9 @@ class BidAF(SpanPredictionModule):
         total_similarity += a_similarity + b_similarity
 
         return total_similarity
+
+    ########################
+    ########################
 
     def max_attention(self, similarity_matrix, context_vectors, context_mask):
         """

@@ -57,39 +57,28 @@ class BidafSimplified(SpanPredictionModule):
 
         return start_logits, end_logits
 
-    def compute_similarity_matrix(self, a, b):
+    def compute_similarity_matrix(self, c, q):
         """
-            :param a: (batch, a_len, hidden_size * 2)
-            :param b: (batch, b_len, hidden_size * 2)
-            :return: (batch, a_len, b_len)
-        This method implementation has been inspired with implementation of
-        https://github.com/galsang/BiDAF-pytorch/blob/master/model/model.py
+            :param c: (batch, c_len, hidden_size * 2)
+            :param q: (batch, q_len, hidden_size * 2)
+            :return: (batch, c_len, q_len)
         """
 
-        a_len, b_len = a.shape[1], b.shape[1]
+        c_len, q_len = c.shape[1], q.shape[1]
 
         # "a" component similarity
-        a_similarity = self.att_weight_c(a).expand(-1, -1, b_len)
+        # (batch x c_len x 1) -> (batch x c_len x q_len)
+        a_similarity = self.att_weight_c(c).expand(-1, -1, q_len)
 
         # "b" component similarity
-        b_similarity = self.att_weight_q(b).permute(0, 2, 1).expand(-1, a_len, -1)
+        # (batch x q_len x 1) -> (batch x 1 x q_len) -> (batch x c_len x q_len)
+        b_similarity = self.att_weight_q(q).permute(0, 2, 1).expand(-1, c_len, -1)
 
         # Element wise similarity
-        #####################################
-        element_wise_similarity = []
-        # Go through all the b vector representations
-        for i in range(b_len):
-            # (batch, 1, hidden_size * 2)
-            bi = b.select(1, i).unsqueeze(1)
-
-            # element-wise product them with all a vectors
-            # transform them to scalar representing element-wise component similarity score
-            # (batch, a_len, 1)
-            element_wise_similarity_vector = self.att_weight_cq(a * bi).squeeze(-1)
-            element_wise_similarity.append(element_wise_similarity_vector)
-
-        # (batch, a_len, b_len)
-        element_wise_similarity = torch.stack(element_wise_similarity, dim=-1)
+        # A(B ⊙ w)
+        # B = Q query_matrix (usually smaller), A = context_matrix
+        element_wise_similarity = torch.bmm(c, (q * self.att_weight_cq.weight.unsqueeze(0))
+                                            .transpose(1, 2)) + self.att_weight_cq.bias
 
         # Now add together to get total similarity
         total_similarity = a_similarity + b_similarity + element_wise_similarity
